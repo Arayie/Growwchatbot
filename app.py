@@ -19,7 +19,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS Middleware Setup
+# CORS Middleware Setup for Vercel & Cross-Origin Requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
