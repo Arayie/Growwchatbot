@@ -1,0 +1,9 @@
+beautifulsoup4
+requests
+chromadb
+sentence-transformers
+pandas
+pypdf
+fastapi
+uvicorn
+httpx

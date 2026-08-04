@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groww • SBI Mutual Fund Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0D0F12; color: #FFFFFF; }
+        .groww-green-bg { background-color: #00D09C; }
+        .groww-green-text { color: #00D09C; }
+        .groww-blue-bg { background-color: #5367F5; }
+        .card-bg { background-color: #161920; border-color: #232834; }
+        .bubble-assistant { background-color: #1E222D; border: 1px solid #2B313E; }
+        .pulse-mic { animation: pulse 1.5s infinite; }
+        @keyframes pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 208, 156, 0.7); }
+            70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(0, 208, 156, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 208, 156, 0); }
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen overflow-hidden">
+
+    <!-- Header Navigation -->
+    <header class="flex items-center justify-between px-6 py-3 border-b border-gray-800 bg-[#12141A]">
+        <!-- Left: Groww Emblem + Wordmark -->
+        <div class="flex items-center space-x-3">
+            <div class="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center bg-gradient-to-tr from-[#08F6B6] to-[#5367F5]">
+                <svg width="20" height="20" viewBox="0 0 100 100" fill="none">
+                    <path d="M20,65 L45,40 L60,55 L85,25" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <span class="text-xl font-bold text-white tracking-tight">Groww</span>
+        </div>
+
+        <!-- Right: SBI Emblem -->
+        <div class="flex items-center">
+            <div class="w-8 h-8 rounded-full bg-[#0066EC] flex items-center justify-center relative">
+                <div class="w-2.5 h-2.5 bg-white rounded-full"></div>
+                <div class="absolute bottom-0 w-1 h-3.5 bg-white"></div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Compact Persistent Warning Banner -->
+    <div class="bg-[#FFE5B4]/10 border-y border-[#FFB800]/25 py-1.5 text-center text-[11px] font-semibold text-[#FFC107] tracking-wider uppercase">
+        Facts-Only Assistant • No Investment Advice • Strictly SBI AMC Queries Only
+    </div>
+
+    <!-- Main Scrollable Chat Container -->
+    <main id="chat-container" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 max-w-4xl w-full mx-auto">
+        
+        <!-- Welcome Block & 3 Starter Cards -->
+        <div id="welcome-block" class="card-bg rounded-xl p-5 border space-y-4">
+            <div class="flex items-center space-x-3">
+                <div class="w-7 h-7 rounded-full groww-green-bg flex items-center justify-center text-black font-bold text-xs">AI</div>
+                <p class="text-sm text-gray-300">Welcome to the Facts-Only Assistant. Ask me a factual question about SBI Mutual Funds! (e.g., minimum SIP, exit load, TER)</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
+                <button onclick="sendQuickQuery('What is the current NAV of SBI Small Cap Direct Growth?')" 
+                        class="p-3 text-left rounded-lg bg-[#1E222D] hover:bg-[#282E3D] border border-gray-800 text-xs text-gray-200 transition">
+                    What is the current NAV of SBI Small Cap Direct Growth?
+                </button>
+                <button onclick="sendQuickQuery('What are the rules for ELSS lock-in?')" 
+                        class="p-3 text-left rounded-lg bg-[#1E222D] hover:bg-[#282E3D] border border-gray-800 text-xs text-gray-200 transition">
+                    What are the rules for ELSS lock-in?
+                </button>
+                <button onclick="sendQuickQuery('How do I download my capital gains statement?')" 
+                        class="p-3 text-left rounded-lg bg-[#1E222D] hover:bg-[#282E3D] border border-gray-800 text-xs text-gray-200 transition">
+                    How do I download my capital gains statement?
+                </button>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Bottom Input Bar -->
+    <footer class="p-4 bg-[#12141A] border-t border-gray-800">
+        <div class="max-w-4xl mx-auto flex items-center space-x-3 card-bg rounded-xl px-4 py-2 border">
+            <input id="user-input" type="text" 
+                   placeholder="Ask a factual question... (SBI AMC queries only)" 
+                   class="flex-1 bg-transparent text-sm text-white placeholder-gray-500 focus:outline-none"
+                   oninput="handleInputChange()">
+
+            <!-- Dynamic Button (Mic -> Send Arrow) -->
+            <button id="action-btn" onclick="handleActionClick()" 
+                    class="w-10 h-10 rounded-lg groww-green-bg flex items-center justify-center text-black transition hover:opacity-90">
+                <svg id="mic-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+                </svg>
+                <svg id="send-icon" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
+                </svg>
+            </button>
+        </div>
+    </footer>
+
+    <script>
+        // Set API URL (Update this with your hosted HuggingFace/Render URL once deployed)
+        const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+            ? "http://127.0.0.1:8000/api/chat" 
+            : "https://YOUR_BACKEND_URL.hf.space/api/chat";
+
+        const inputField = document.getElementById('user-input');
+        const actionBtn = document.getElementById('action-btn');
+        const micIcon = document.getElementById('mic-icon');
+        const sendIcon = document.getElementById('send-icon');
+        const chatContainer = document.getElementById('chat-container');
+
+        let recognition = null;
+        let isRecording = false;
+
+        // Initialize Native Speech Recognition for Live Text Streaming
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+
+            recognition.onresult = (event) => {
+                let transcript = '';
+                for (let i = 0; i < event.results.length; ++i) {
+                    transcript += event.results[i][0].transcript;
+                }
+                inputField.value = transcript;
+                handleInputChange();
+            };
+
+            recognition.onend = () => {
+                isRecording = false;
+                actionBtn.classList.remove('pulse-mic');
+                handleInputChange();
+            };
+        }
+
+        function handleInputChange() {
+            if (inputField.value.trim().length > 0) {
+                micIcon.classList.add('hidden');
+                sendIcon.classList.remove('hidden');
+            } else {
+                micIcon.classList.remove('hidden');
+                sendIcon.classList.add('hidden');
+            }
+        }
+
+        function handleActionClick() {
+            const query = inputField.value.trim();
+            if (query.length > 0) {
+                if (isRecording && recognition) recognition.stop();
+                submitQuery(query);
+            } else {
+                toggleVoice();
+            }
+        }
+
+        function toggleVoice() {
+            if (!recognition) {
+                alert('Speech Recognition is not supported in this browser. Please type your query.');
+                return;
+            }
+
+            if (isRecording) {
+                recognition.stop();
+            } else {
+                inputField.value = '';
+                recognition.start();
+                isRecording = true;
+                actionBtn.classList.add('pulse-mic');
+            }
+        }
+
+        function sendQuickQuery(text) {
+            inputField.value = text;
+            submitQuery(text);
+        }
+
+        async function submitQuery(query) {
+            if (!query) return;
+
+            appendUserBubble(query);
+            inputField.value = '';
+            handleInputChange();
+
+            const loadingId = appendLoadingBubble();
+
+            try {
+                const res = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: query })
+                });
+
+                const data = await res.json();
+                removeBubble(loadingId);
+                appendAssistantBubble(data);
+
+            } catch (err) {
+                removeBubble(loadingId);
+                appendAssistantBubble({
+                    answer: "Unable to reach the RAG API server. Please check if your FastAPI backend is live.",
+                    source_url: "https://www.sbimf.com",
+                    last_updated: "2026-08-04",
+                    follow_up_questions: []
+                });
+            }
+        }
+
+        function appendUserBubble(text) {
+            const div = document.createElement('div');
+            div.className = 'flex justify-end';
+            div.innerHTML = `<div class="groww-blue-bg text-white px-4 py-3 rounded-2xl max-w-lg text-sm">${text}</div>`;
+            chatContainer.appendChild(div);
+            scrollToBottom();
+        }
+
+        function appendAssistantBubble(data) {
+            const div = document.createElement('div');
+            div.className = 'bubble-assistant rounded-xl p-4 max-w-2xl space-y-3';
+            
+            let sourceHtml = data.source_url ? 
+                `<div class="pt-1"><a href="${data.source_url}" target="_blank" class="inline-flex items-center space-x-1 px-2.5 py-1 rounded bg-[#282E3D] text-[11px] text-gray-300 hover:text-white transition"><span>Source: ${data.source_url}</span> ↗</a></div>` : '';
+
+            let timestampHtml = `<p class="text-[11px] text-gray-500">Last updated from sources: ${data.last_updated || '2026-08-04'}</p>`;
+
+            let followUpsHtml = '';
+            if (data.follow_up_questions && data.follow_up_questions.length > 0) {
+                followUpsHtml = `<div class="flex flex-wrap gap-2 pt-2">` + 
+                    data.follow_up_questions.map(q => 
+                        `<button onclick="sendQuickQuery('${q.replace(/'/g, "\\'")}')" class="px-3 py-1.5 rounded-full border border-[#00D09C]/40 text-[12px] groww-green-text hover:bg-[#00D09C]/10 transition">${q}</button>`
+                    ).join('') + `</div>`;
+            }
+
+            div.innerHTML = `
+                <div class="text-sm text-gray-100 leading-relaxed">${data.answer}</div>
+                ${sourceHtml}
+                ${timestampHtml}
+                ${followUpsHtml}
+            `;
+
+            chatContainer.appendChild(div);
+            scrollToBottom();
+        }
+
+        function appendLoadingBubble() {
+            const id = 'loading-' + Date.now();
+            const div = document.createElement('div');
+            div.id = id;
+            div.className = 'bubble-assistant rounded-xl p-4 max-w-sm text-xs text-gray-400 animate-pulse';
+            div.innerText = 'Searching verified SBI AMC facts database...';
+            chatContainer.appendChild(div);
+            scrollToBottom();
+            return id;
+        }
+
+        function removeBubble(id) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+        }
+
+        function scrollToBottom() {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+    </script>
+</body>
+</html>
