@@ -19,7 +19,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS Middleware Setup for Vercel & Cross-Origin Requests
+# Enable CORS for all origins, methods, and headers to fix preflight requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
