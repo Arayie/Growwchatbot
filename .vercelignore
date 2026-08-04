@@ -1,0 +1,7 @@
+*.py
+requirements.txt
+runtime.txt
+*.db
+.venv/
+venv/
+__pycache__/
