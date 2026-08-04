@@ -99,10 +99,8 @@
     </footer>
 
     <script>
-        // Set API URL (Update this with your hosted HuggingFace/Render URL once deployed)
-        const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-            ? "http://127.0.0.1:8000/api/chat" 
-            : "https://YOUR_BACKEND_URL.hf.space/api/chat";
+        // Set API URL directly to Render backend endpoint
+        const API_URL = "https://growwchatbot-1.onrender.com/api/chat";
 
         const inputField = document.getElementById('user-input');
         const actionBtn = document.getElementById('action-btn');
@@ -112,6 +110,14 @@
 
         let recognition = null;
         let isRecording = false;
+
+        // Enter key listener to submit query
+        document.getElementById('user-input').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                handleActionClick();
+            }
+        });
 
         // Initialize Native Speech Recognition for Live Text Streaming
         if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -187,6 +193,7 @@
             const loadingId = appendLoadingBubble();
 
             try {
+                console.log("Sending request to:", API_URL, "with message:", query);
                 const res = await fetch(API_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -198,9 +205,10 @@
                 appendAssistantBubble(data);
 
             } catch (err) {
+                console.error("Fetch error:", err);
                 removeBubble(loadingId);
                 appendAssistantBubble({
-                    answer: "Unable to reach the RAG API server. Please check if your FastAPI backend is live.",
+                    answer: "Sorry, could not connect to the backend server. Please verify the API backend is live.",
                     source_url: "https://www.sbimf.com",
                     last_updated: "2026-08-04",
                     follow_up_questions: []
