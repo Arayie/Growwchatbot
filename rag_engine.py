@@ -1,5 +1,6 @@
 import os
 import re
+import logging
 from typing import Dict, Any, List, Optional
 from langchain_community.vectorstores import Chroma
 
@@ -12,10 +13,15 @@ from db import get_all_scheme_facts, get_scheme_fact_by_id, DB_FILE
 from router import classify_intent
 from guardrails import sanitize_user_input
 
+# Configure Structured Logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+logger = logging.getLogger("rag_engine")
+
 CHROMA_DB_DIR = os.path.join(os.path.dirname(__file__), "chroma_db")
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_TIMESTAMP = "2026-08-04"
 DEFAULT_SOURCE_URL = "https://www.sbimf.com"
+MAX_SIMILARITY_SCORE_THRESHOLD = 0.85
 
 # Scheme Mapping Keywords
 SCHEME_KEYWORDS = {
@@ -44,12 +50,23 @@ METRIC_KEYWORDS = {
 }
 
 
+def _match_keyword(kw: str, text: str) -> bool:
+    """Matches keyword using word boundaries for short terms like 'ter', 'nav', 'aum'."""
+    if len(kw) <= 4:
+        return bool(re.search(r'\b' + re.escape(kw) + r'\b', text))
+    return kw in text
+
+
 def _get_vectorstore():
-    embeddings = HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL_NAME,
-        model_kwargs={"local_files_only": True}
-    )
-    return Chroma(persist_directory=CHROMA_DB_DIR, embedding_function=embeddings)
+    try:
+        embeddings = HuggingFaceEmbeddings(
+            model_name=EMBEDDING_MODEL_NAME,
+            model_kwargs={"local_files_only": True}
+        )
+        return Chroma(persist_directory=CHROMA_DB_DIR, embedding_function=embeddings)
+    except Exception as e:
+        logger.error(f"Failed to load ChromaDB vectorstore: {e}", exc_info=True)
+        return None
 
 
 def query_sql_facts(query_text: str) -> Optional[Dict[str, Any]]:
@@ -59,85 +76,95 @@ def query_sql_facts(query_text: str) -> Optional[Dict[str, Any]]:
     # Identify Scheme ID
     matched_scheme_id = None
     for scheme_id, keywords in SCHEME_KEYWORDS.items():
-        if any(kw in query_lower for kw in keywords):
+        if any(_match_keyword(kw, query_lower) for kw in keywords):
             matched_scheme_id = scheme_id
             break
 
     if not matched_scheme_id:
         return None
 
-    # Retrieve Scheme Record from SQLite
-    fact_record = get_scheme_fact_by_id(matched_scheme_id)
-    if not fact_record:
+    try:
+        fact_record = get_scheme_fact_by_id(matched_scheme_id)
+        if not fact_record:
+            return None
+
+        scheme_name = fact_record["scheme_name"]
+        source_url = fact_record["source_url"]
+
+        # Identify Metric
+        matched_metric = None
+        for metric_key, keywords in METRIC_KEYWORDS.items():
+            if any(_match_keyword(kw, query_lower) for kw in keywords):
+                matched_metric = metric_key
+                break
+
+        if not matched_metric:
+            return None
+
+        # Format Factual Response
+        if matched_metric == "min_sip_amount":
+            val = fact_record["min_sip_amount"]
+            ans = f"The minimum SIP investment amount for {scheme_name} is ₹{val:g}."
+        elif matched_metric == "min_lumpsum_amount":
+            val = fact_record["min_lumpsum_amount"]
+            ans = f"The minimum lump sum investment amount for {scheme_name} is ₹{val:g}."
+        elif matched_metric == "expense_ratio_pct":
+            val = fact_record["expense_ratio_pct"]
+            ans = f"The Total Expense Ratio (TER) for {scheme_name} is {val:.2f}% per annum."
+        elif matched_metric == "exit_load_text":
+            val = fact_record["exit_load_text"]
+            ans = f"The exit load structure for {scheme_name} is: {val}"
+        elif matched_metric == "nav_value":
+            val = fact_record["nav_value"]
+            ans = f"The latest Net Asset Value (NAV) for {scheme_name} is ₹{val:.2f}."
+        elif matched_metric == "fund_size_crores":
+            val = fact_record["fund_size_crores"]
+            ans = f"The fund size (AUM) of {scheme_name} is ₹{val:,.2f} Crores."
+        elif matched_metric == "riskometer_rating":
+            val = fact_record["riskometer_rating"]
+            ans = f"The riskometer rating for {scheme_name} is classified as '{val}'."
+        elif matched_metric == "benchmark_index":
+            val = fact_record["benchmark_index"]
+            ans = f"The benchmark index for {scheme_name} is the {val}."
+        else:
+            return None
+
+        logger.info(f"SQL Lookup Success: Scheme='{scheme_name}', Metric='{matched_metric}'")
+        return {
+            "text": ans,
+            "source_url": source_url,
+            "scheme_name": scheme_name,
+            "last_updated": fact_record["last_updated"]
+        }
+    except Exception as e:
+        logger.error(f"Error executing SQL fact query: {e}", exc_info=True)
         return None
-
-    scheme_name = fact_record["scheme_name"]
-    source_url = fact_record["source_url"]
-
-    # Identify Metric
-    matched_metric = None
-    for metric_key, keywords in METRIC_KEYWORDS.items():
-        if any(kw in query_lower for kw in keywords):
-            matched_metric = metric_key
-            break
-
-    if not matched_metric:
-        return None
-
-    # Format Factual Response
-    if matched_metric == "min_sip_amount":
-        val = fact_record["min_sip_amount"]
-        ans = f"The minimum SIP investment amount for {scheme_name} is ₹{val:g}."
-    elif matched_metric == "min_lumpsum_amount":
-        val = fact_record["min_lumpsum_amount"]
-        ans = f"The minimum lump sum investment amount for {scheme_name} is ₹{val:g}."
-    elif matched_metric == "expense_ratio_pct":
-        val = fact_record["expense_ratio_pct"]
-        ans = f"The Total Expense Ratio (TER) for {scheme_name} is {val:.2f}% per annum."
-    elif matched_metric == "exit_load_text":
-        val = fact_record["exit_load_text"]
-        ans = f"The exit load structure for {scheme_name} is: {val}"
-    elif matched_metric == "nav_value":
-        val = fact_record["nav_value"]
-        ans = f"The latest Net Asset Value (NAV) for {scheme_name} is ₹{val:.2f}."
-    elif matched_metric == "fund_size_crores":
-        val = fact_record["fund_size_crores"]
-        ans = f"The fund size (AUM) of {scheme_name} is ₹{val:,.2f} Crores."
-    elif matched_metric == "riskometer_rating":
-        val = fact_record["riskometer_rating"]
-        ans = f"The riskometer rating for {scheme_name} is classified as '{val}'."
-    elif matched_metric == "benchmark_index":
-        val = fact_record["benchmark_index"]
-        ans = f"The benchmark index for {scheme_name} is the {val}."
-    else:
-        return None
-
-    return {
-        "text": ans,
-        "source_url": source_url,
-        "scheme_name": scheme_name,
-        "last_updated": fact_record["last_updated"]
-    }
 
 
 def query_vector_search(query_text: str) -> Optional[Dict[str, Any]]:
-    """Performs semantic similarity search in ChromaDB for procedural/unstructured queries."""
+    """Performs semantic similarity search in ChromaDB with score threshold filtering."""
     if not os.path.exists(CHROMA_DB_DIR):
+        logger.warning(f"ChromaDB directory not found at {CHROMA_DB_DIR}")
         return None
 
     try:
         vectorstore = _get_vectorstore()
+        if not vectorstore:
+            return None
+
         results = vectorstore.similarity_search_with_score(query_text, k=4)
         if not results:
             return None
 
         best_doc, score = results[0]
-        # Distance score check for relevance (tight threshold for zero hallucination)
-        if score > 0.85:
+        logger.info(f"ChromaDB Vector Search Result: Best Score = {score:.4f}")
+
+        # Guardrail: Distance score threshold filtering (Max 0.85 acceptable cutoff)
+        if score > MAX_SIMILARITY_SCORE_THRESHOLD:
+            logger.info(f"Vector search score {score:.4f} exceeded threshold {MAX_SIMILARITY_SCORE_THRESHOLD}. Rejecting as unverified.")
             return None
 
         content = best_doc.page_content.strip()
-        # Take top 2 clean sentences
         sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', content) if len(s.strip()) > 10]
         clean_text = " ".join(sentences[:2]) if sentences else content[:250]
         if not clean_text.endswith("."):
@@ -154,7 +181,7 @@ def query_vector_search(query_text: str) -> Optional[Dict[str, Any]]:
             "last_updated": last_updated
         }
     except Exception as e:
-        print(f"Error querying ChromaDB: {e}")
+        logger.error(f"Error querying ChromaDB vector store: {e}", exc_info=True)
         return None
 
 
@@ -204,85 +231,106 @@ def process_rag_query(user_query: str) -> Dict[str, Any]:
     Unified RAG Execution Pipeline combining Guardrails (Phase 2),
     SQL Facts + Vector Search (Phase 1), and Response Formatting (Phase 3).
     """
-    # Step 1: Intent Classification & Safety Guardrails
-    intent_data = classify_intent(user_query)
-    intent = intent_data["intent"]
+    logger.info(f"Processing RAG Query: '{user_query}'")
+    
+    try:
+        # Step 1: Intent Classification & Safety Guardrails
+        intent_data = classify_intent(user_query)
+        intent = intent_data["intent"]
 
-    # Refusal Responses for NON_MF_QUERY, ADVICE_OR_OPINION, AMBIGUOUS_QUERY
-    if intent == "NON_MF_QUERY":
+        # Refusal Responses for NON_MF_QUERY, ADVICE_OR_OPINION, AMBIGUOUS_QUERY
+        if intent == "NON_MF_QUERY":
+            logger.info("Query classified as NON_MF_QUERY")
+            return {
+                "answer": intent_data["response"],
+                "source_url": DEFAULT_SOURCE_URL,
+                "follow_up_questions": [
+                    "What is the minimum SIP for SBI Small Cap Fund?",
+                    "How do I download my account statement?",
+                    "What is the NAV cut-off time for equity funds?"
+                ]
+            }
+        elif intent == "ADVICE_OR_OPINION":
+            logger.info("Query classified as ADVICE_OR_OPINION")
+            refusal_msg = f"{intent_data['response']}\n\nOfficial Factsheets: {intent_data['citation_url']}\n\nLast updated from sources: {DEFAULT_TIMESTAMP}"
+            return {
+                "answer": refusal_msg,
+                "source_url": intent_data["citation_url"],
+                "follow_up_questions": [
+                    "What is the riskometer rating of SBI Small Cap Fund?",
+                    "What is the expense ratio of SBI Bluechip Fund?",
+                    "What is the benchmark for SBI Long Term Equity Fund?"
+                ]
+            }
+        elif intent == "AMBIGUOUS_QUERY":
+            logger.info("Query classified as AMBIGUOUS_QUERY")
+            return {
+                "answer": intent_data["clarification_needed"],
+                "source_url": DEFAULT_SOURCE_URL,
+                "follow_up_questions": [
+                    "What is the NAV of SBI Small Cap Direct Growth?",
+                    "What is the NAV of SBI Bluechip Direct Growth?",
+                    "What is the NAV of SBI Long Term Equity Direct Growth?"
+                ]
+            }
+
+        # Step 2: Hybrid Retrieval (SQL Lookup -> Vector Search Fallback)
+        sanitized_query = intent_data.get("sanitized_query", user_query)
+        route = intent_data.get("route", "SQL_LOOKUP")
+
+        retrieved = None
+        if route == "SQL_LOOKUP":
+            retrieved = query_sql_facts(sanitized_query)
+
+        if not retrieved:
+            retrieved = query_vector_search(sanitized_query)
+
+        # Step 3: Zero Hallucination Rule (Unknown Refusal)
+        if not retrieved:
+            logger.info("No matching factual source found. Returning zero-hallucination refusal.")
+            unknown_msg = (
+                "I do not have enough verified factual information in my current sources to answer this question. "
+                "Please refer to the official SBI Mutual Fund documentation at https://www.sbimf.com."
+            )
+            return {
+                "answer": unknown_msg,
+                "source_url": DEFAULT_SOURCE_URL,
+                "follow_up_questions": [
+                    "What is the minimum SIP amount for SBI Small Cap Fund?",
+                    "How do I download my capital gains statement?",
+                    "What is the lock-in period for SBI ELSS Fund?"
+                ]
+            }
+
+        # Step 4: Format Final Answer (<= 3 Sentences + Citation + Timestamp)
+        answer_text = (
+            f"{retrieved['text']}\n"
+            f"Source: {retrieved['source_url']}\n\n"
+            f"Last updated from sources: {retrieved['last_updated']}"
+        )
+
+        follow_ups = generate_follow_up_questions(retrieved.get("scheme_name", ""))
+
         return {
-            "answer": intent_data["response"],
-            "source_url": DEFAULT_SOURCE_URL,
-            "follow_up_questions": [
-                "What is the minimum SIP for SBI Small Cap Fund?",
-                "How do I download my account statement?",
-                "What is the NAV cut-off time for equity funds?"
-            ]
-        }
-    elif intent == "ADVICE_OR_OPINION":
-        refusal_msg = f"{intent_data['response']}\n\nOfficial Factsheets: {intent_data['citation_url']}\n\nLast updated from sources: {DEFAULT_TIMESTAMP}"
-        return {
-            "answer": refusal_msg,
-            "source_url": intent_data["citation_url"],
-            "follow_up_questions": [
-                "What is the riskometer rating of SBI Small Cap Fund?",
-                "What is the expense ratio of SBI Bluechip Fund?",
-                "What is the benchmark for SBI Long Term Equity Fund?"
-            ]
-        }
-    elif intent == "AMBIGUOUS_QUERY":
-        return {
-            "answer": intent_data["clarification_needed"],
-            "source_url": DEFAULT_SOURCE_URL,
-            "follow_up_questions": [
-                "What is the NAV of SBI Small Cap Direct Growth?",
-                "What is the NAV of SBI Bluechip Direct Growth?",
-                "What is the NAV of SBI Long Term Equity Direct Growth?"
-            ]
+            "answer": answer_text,
+            "source_url": retrieved["source_url"],
+            "follow_up_questions": follow_ups
         }
 
-    # Step 2: Hybrid Retrieval (SQL Lookup -> Vector Search Fallback)
-    sanitized_query = intent_data.get("sanitized_query", user_query)
-    route = intent_data.get("route", "SQL_LOOKUP")
-
-    retrieved = None
-    if route == "SQL_LOOKUP":
-        retrieved = query_sql_facts(sanitized_query)
-
-    # Fallback to Vector Search if SQL Lookup returned None or for VECTOR_SEARCH route
-    if not retrieved:
-        retrieved = query_vector_search(sanitized_query)
-
-    # Step 3: Zero Hallucination Rule (Unknown Refusal)
-    if not retrieved:
-        unknown_msg = (
+    except Exception as e:
+        logger.error(f"Unhandled exception in process_rag_query: {e}", exc_info=True)
+        fallback_err = (
             "I do not have enough verified factual information in my current sources to answer this question. "
             "Please refer to the official SBI Mutual Fund documentation at https://www.sbimf.com."
         )
         return {
-            "answer": unknown_msg,
+            "answer": fallback_err,
             "source_url": DEFAULT_SOURCE_URL,
             "follow_up_questions": [
                 "What is the minimum SIP amount for SBI Small Cap Fund?",
-                "How do I download my capital gains statement?",
-                "What is the lock-in period for SBI ELSS Fund?"
+                "How do I download my capital gains statement?"
             ]
         }
-
-    # Step 4: Format Final Answer (<= 3 Sentences + Citation + Timestamp)
-    answer_text = (
-        f"{retrieved['text']}\n"
-        f"Source: {retrieved['source_url']}\n\n"
-        f"Last updated from sources: {retrieved['last_updated']}"
-    )
-
-    follow_ups = generate_follow_up_questions(retrieved.get("scheme_name", ""))
-
-    return {
-        "answer": answer_text,
-        "source_url": retrieved["source_url"],
-        "follow_up_questions": follow_ups
-    }
 
 
 if __name__ == "__main__":

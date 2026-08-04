@@ -1,13 +1,17 @@
 import os
+import logging
 import uvicorn
 from typing import List, Optional
-from fastapi import FastAPI
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from rag_engine import process_rag_query
 from router import classify_intent
+
+# Configure Structured Logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+logger = logging.getLogger("api_server")
 
 app = FastAPI(
     title="Groww Facts-Only SBI Mutual Fund AI Assistant API",
@@ -44,6 +48,7 @@ class ChatResponse(BaseModel):
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint for service uptime monitoring."""
+    logger.info("Health check endpoint pinged.")
     return {
         "status": "online",
         "version": "1.0.0",
@@ -56,29 +61,51 @@ async def chat_endpoint(request: ChatRequest):
     """Main conversation endpoint handling user prompts through Phase 3 RAG Engine."""
     user_msg = request.message
     if not user_msg or not user_msg.strip():
+        logger.warning("Empty message received at /api/chat")
         raise HTTPException(status_code=400, detail="Message prompt cannot be empty.")
 
-    # Step 1: Detect intent via Phase 2 router
-    intent_data = classify_intent(user_msg)
-    intent = intent_data["intent"]
+    logger.info(f"Received API Chat Request: '{user_msg[:60]}...'")
 
-    # Step 2: Execute query via Phase 3 RAG Engine
-    rag_res = process_rag_query(user_msg)
+    try:
+        # Step 1: Detect intent via Phase 2 router
+        intent_data = classify_intent(user_msg)
+        intent = intent_data["intent"]
 
-    # Step 3: Handle special cases (Ambiguous query clarification)
-    clarification = None
-    if intent == "AMBIGUOUS_QUERY":
-        clarification = intent_data.get("clarification_needed", "Please specify the scheme name and plan.")
+        # Step 2: Execute query via Phase 3 RAG Engine
+        rag_res = process_rag_query(user_msg)
 
-    return ChatResponse(
-        status="success",
-        intent=intent,
-        answer=rag_res["answer"],
-        source_url=rag_res["source_url"],
-        last_updated="2026-08-04",
-        follow_up_questions=rag_res.get("follow_up_questions", []),
-        clarification_needed=clarification
-    )
+        # Step 3: Handle special cases (Ambiguous query clarification)
+        clarification = None
+        if intent == "AMBIGUOUS_QUERY":
+            clarification = intent_data.get("clarification_needed", "Please specify the scheme name and plan.")
+
+        return ChatResponse(
+            status="success",
+            intent=intent,
+            answer=rag_res["answer"],
+            source_url=rag_res["source_url"],
+            last_updated="2026-08-04",
+            follow_up_questions=rag_res.get("follow_up_questions", []),
+            clarification_needed=clarification
+        )
+    except Exception as e:
+        logger.error(f"Unhandled exception in /api/chat endpoint: {e}", exc_info=True)
+        fallback_msg = (
+            "I do not have enough verified factual information in my current sources to answer this question. "
+            "Please refer to the official SBI Mutual Fund documentation at https://www.sbimf.com."
+        )
+        return ChatResponse(
+            status="success",
+            intent="FACTUAL_QUERY",
+            answer=fallback_msg,
+            source_url="https://www.sbimf.com",
+            last_updated="2026-08-04",
+            follow_up_questions=[
+                "What is the minimum SIP amount for SBI Small Cap Fund?",
+                "How do I download my capital gains statement?"
+            ],
+            clarification_needed=None
+        )
 
 
 if __name__ == "__main__":
