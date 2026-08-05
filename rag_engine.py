@@ -89,6 +89,48 @@ def _get_embedding_function():
         return None
 
 
+def get_working_gemini_response(prompt_text: str) -> str:
+    """Dynamically auto-discovers active Gemini models from genai.list_models() with fallback loop."""
+    import google.generativeai as genai
+    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not gemini_key:
+        raise Exception("Missing Gemini API key in environment variables.")
+
+    genai.configure(api_key=gemini_key)
+
+    # Candidate list of standard Gemini model names
+    candidates = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-2.5-flash"]
+
+    # Try candidates first
+    for model_name in candidates:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt_text, request_options={"timeout": 10})
+            if response and response.text:
+                logger.info(f"Successfully generated content with candidate Gemini model: '{model_name}'")
+                return response.text.strip()
+        except Exception:
+            continue
+
+    # If standard candidates fail, dynamically query available models on the key
+    try:
+        available_models = [
+            m.name for m in genai.list_models()
+            if 'generateContent' in m.supported_generation_methods
+        ]
+        if available_models:
+            target = available_models[0].replace('models/', '')
+            model = genai.GenerativeModel(target)
+            res = model.generate_content(prompt_text, request_options={"timeout": 10})
+            if res and res.text:
+                logger.info(f"Successfully generated content with auto-discovered Gemini model: '{target}'")
+                return res.text.strip()
+    except Exception as e:
+        raise Exception(f"All Gemini models failed. Primary issue: {str(e)}")
+
+    raise Exception("No active Gemini model supports generateContent on this API key.")
+
+
 def synthesize_llm_answer(retrieved_context: str, user_query: str) -> str:
     """
     Executes actual LLM completion call (Groq / Gemini / OpenAI) with prompt template.
@@ -129,17 +171,13 @@ User Question: {user_query}"""
             logger.warning(err_msg)
             errors.append(err_msg)
 
-    # 2. Gemini API (gemini-2.5-flash)
+    # 2. Gemini API (Dynamic Auto-Discovery & Fallback)
     gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if gemini_key:
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("gemini-2.5-flash")
-            response = model.generate_content(prompt, request_options={"timeout": 10})
-            if response and response.text:
-                logger.info("Successfully completed LLM synthesis using Gemini Flash (gemini-2.5-flash)")
-                return response.text.strip()
+            gem_res = get_working_gemini_response(prompt)
+            if gem_res:
+                return gem_res
         except Exception as e:
             err_msg = f"Gemini Error: {type(e).__name__} - {str(e)}"
             logger.warning(err_msg)
