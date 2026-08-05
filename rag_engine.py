@@ -129,20 +129,16 @@ User Question: {user_query}"""
             logger.warning(err_msg)
             errors.append(err_msg)
 
-    # 2. Gemini API (gemini-2.5-flash / gemini-1.5-flash)
+    # 2. Gemini API (gemini-2.5-flash)
     gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if gemini_key:
         try:
             import google.generativeai as genai
             genai.configure(api_key=gemini_key)
-            try:
-                model = genai.GenerativeModel("gemini-2.5-flash")
-                response = model.generate_content(prompt, request_options={"timeout": 10})
-            except Exception:
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                response = model.generate_content(prompt, request_options={"timeout": 10})
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            response = model.generate_content(prompt, request_options={"timeout": 10})
             if response and response.text:
-                logger.info("Successfully completed LLM synthesis using Gemini Flash")
+                logger.info("Successfully completed LLM synthesis using Gemini Flash (gemini-2.5-flash)")
                 return response.text.strip()
         except Exception as e:
             err_msg = f"Gemini Error: {type(e).__name__} - {str(e)}"
