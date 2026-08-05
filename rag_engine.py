@@ -95,11 +95,10 @@ def get_working_gemini_response(prompt_text: str) -> str:
     gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not gemini_key:
         raise Exception("Missing Gemini API key in environment variables.")
-
     genai.configure(api_key=gemini_key)
 
-    # Candidate list of standard Gemini model names
-    candidates = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-2.5-flash"]
+    # Priority-ordered valid Gemini models
+    candidates = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
 
     # Try candidates first
     for model_name in candidates:
