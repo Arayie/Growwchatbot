@@ -2,12 +2,6 @@ import os
 import re
 import logging
 from typing import Dict, Any, List, Optional
-from langchain_community.vectorstores import Chroma
-
-try:
-    from langchain_huggingface import HuggingFaceEmbeddings
-except ImportError:
-    from langchain_community.embeddings import HuggingFaceEmbeddings
 
 from db import get_all_scheme_facts, get_scheme_fact_by_id, DB_FILE
 from router import classify_intent
@@ -18,7 +12,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger("rag_engine")
 
 CHROMA_DB_DIR = os.path.join(os.path.dirname(__file__), "chroma_db")
-EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_TIMESTAMP = "2026-08-04"
 DEFAULT_SOURCE_URL = "https://www.sbimf.com"
 MAX_SIMILARITY_SCORE_THRESHOLD = 0.85
@@ -57,15 +50,41 @@ def _match_keyword(kw: str, text: str) -> bool:
     return kw in text
 
 
-def _get_vectorstore():
+def _get_embedding_function():
+    """
+    Lightweight embedding provider selector.
+    Prioritizes lightweight API embeddings (Google Gemini / OpenAI) over heavy local PyTorch models.
+    """
+    # 1. Check for Gemini API key
+    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if gemini_key:
+        try:
+            from langchain_google_genai import GoogleGenerativeAIEmbeddings
+            logger.info("Using API Embeddings: GoogleGenerativeAIEmbeddings")
+            return GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=gemini_key)
+        except Exception as e:
+            logger.warning(f"Could not initialize GoogleGenerativeAIEmbeddings: {e}")
+
+    # 2. Check for OpenAI API key
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            from langchain_openai import OpenAIEmbeddings
+            logger.info("Using API Embeddings: OpenAIEmbeddings")
+            return OpenAIEmbeddings(openai_api_key=openai_key)
+        except Exception as e:
+            logger.warning(f"Could not initialize OpenAIEmbeddings: {e}")
+
+    # 3. Fallback to local HuggingFace embeddings if available
     try:
-        embeddings = HuggingFaceEmbeddings(
-            model_name=EMBEDDING_MODEL_NAME,
+        from langchain_community.embeddings import HuggingFaceEmbeddings
+        logger.info("Fallback to local HuggingFaceEmbeddings")
+        return HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
             model_kwargs={"local_files_only": True}
         )
-        return Chroma(persist_directory=CHROMA_DB_DIR, embedding_function=embeddings)
     except Exception as e:
-        logger.error(f"Failed to load ChromaDB vectorstore: {e}", exc_info=True)
+        logger.warning(f"Local HuggingFaceEmbeddings unavailable (heavy PyTorch stripped): {e}")
         return None
 
 
@@ -142,44 +161,61 @@ def query_sql_facts(query_text: str) -> Optional[Dict[str, Any]]:
 
 
 def query_vector_search(query_text: str) -> Optional[Dict[str, Any]]:
-    """Performs semantic similarity search in ChromaDB with score threshold filtering."""
+    """Performs semantic similarity search in ChromaDB with lightweight API or native Chroma search."""
     if not os.path.exists(CHROMA_DB_DIR):
         logger.warning(f"ChromaDB directory not found at {CHROMA_DB_DIR}")
         return None
 
     try:
-        vectorstore = _get_vectorstore()
-        if not vectorstore:
-            return None
+        # Option A: LangChain Chroma with API / local embeddings
+        embeddings = _get_embedding_function()
+        if embeddings:
+            try:
+                from langchain_community.vectorstores import Chroma
+                vectorstore = Chroma(persist_directory=CHROMA_DB_DIR, embedding_function=embeddings)
+                results = vectorstore.similarity_search_with_score(query_text, k=4)
+                if results:
+                    best_doc, score = results[0]
+                    logger.info(f"ChromaDB Vector Search Result: Best Score = {score:.4f}")
+                    if score <= MAX_SIMILARITY_SCORE_THRESHOLD:
+                        content = best_doc.page_content.strip()
+                        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', content) if len(s.strip()) > 10]
+                        clean_text = " ".join(sentences[:2]) if sentences else content[:250]
+                        if not clean_text.endswith("."):
+                            clean_text += "."
+                        metadata = best_doc.metadata
+                        return {
+                            "text": clean_text,
+                            "source_url": metadata.get("source_url", DEFAULT_SOURCE_URL),
+                            "scheme_name": metadata.get("topic", "SBI Mutual Fund"),
+                            "last_updated": metadata.get("last_updated", DEFAULT_TIMESTAMP)
+                        }
+            except Exception as e_lc:
+                logger.warning(f"LangChain vectorstore query skipped: {e_lc}")
 
-        results = vectorstore.similarity_search_with_score(query_text, k=4)
-        if not results:
-            return None
+        # Option B: Native ChromaDB PersistentClient search (Lightweight, No PyTorch)
+        import chromadb
+        client = chromadb.PersistentClient(path=CHROMA_DB_DIR)
+        collections = client.list_collections()
+        if collections:
+            collection = client.get_collection(collections[0].name)
+            res = collection.query(query_texts=[query_text], n_results=1)
+            if res and res.get("documents") and res["documents"][0]:
+                doc_text = res["documents"][0][0]
+                meta = res["metadatas"][0][0] if res.get("metadatas") else {}
+                sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', doc_text) if len(s.strip()) > 10]
+                clean_text = " ".join(sentences[:2]) if sentences else doc_text[:250]
+                if not clean_text.endswith("."):
+                    clean_text += "."
+                logger.info("ChromaDB Native Client Search Succeeded")
+                return {
+                    "text": clean_text,
+                    "source_url": meta.get("source_url", DEFAULT_SOURCE_URL),
+                    "scheme_name": meta.get("topic", "SBI Mutual Fund"),
+                    "last_updated": meta.get("last_updated", DEFAULT_TIMESTAMP)
+                }
 
-        best_doc, score = results[0]
-        logger.info(f"ChromaDB Vector Search Result: Best Score = {score:.4f}")
-
-        # Guardrail: Distance score threshold filtering (Max 0.85 acceptable cutoff)
-        if score > MAX_SIMILARITY_SCORE_THRESHOLD:
-            logger.info(f"Vector search score {score:.4f} exceeded threshold {MAX_SIMILARITY_SCORE_THRESHOLD}. Rejecting as unverified.")
-            return None
-
-        content = best_doc.page_content.strip()
-        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', content) if len(s.strip()) > 10]
-        clean_text = " ".join(sentences[:2]) if sentences else content[:250]
-        if not clean_text.endswith("."):
-            clean_text += "."
-
-        metadata = best_doc.metadata
-        source_url = metadata.get("source_url", DEFAULT_SOURCE_URL)
-        last_updated = metadata.get("last_updated", DEFAULT_TIMESTAMP)
-
-        return {
-            "text": clean_text,
-            "source_url": source_url,
-            "scheme_name": metadata.get("topic", "SBI Mutual Fund"),
-            "last_updated": last_updated
-        }
+        return None
     except Exception as e:
         logger.error(f"Error querying ChromaDB vector store: {e}", exc_info=True)
         return None
