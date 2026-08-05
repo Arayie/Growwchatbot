@@ -91,20 +91,21 @@ def _get_embedding_function():
 
 def synthesize_llm_answer(retrieved_context: str, user_query: str) -> str:
     """
-    Synthesizes raw retrieved context into a concise 2-sentence answer via LLM API.
-    Exposes explicit LLM execution errors when API calls fail or keys are unconfigured.
+    Executes actual LLM completion call (Groq / Gemini / OpenAI) with prompt template.
+    Returns LLM generated response or LLM Generation Failed error if completion fails.
     """
-    prompt = (
-        "You are an SBI AMC factual assistant. Synthesize the answer into 2 concise sentences based ONLY on the provided context. "
-        "Do not output raw retrieved chunks. If the exact answer is in the facts, state it clearly. "
-        "If not, state that the information is not available.\n\n"
-        f"Context:\n{retrieved_context}\n\n"
-        f"User Question: {user_query}"
-    )
+    prompt = f"""You are a factual assistant for SBI Mutual Funds.
+Answer the question in 2 clear, natural sentences using ONLY the facts below.
+If the answer isn't in the facts, say "Information not available in official SBI AMC documents."
+
+Facts:
+{retrieved_context}
+
+User Question: {user_query}"""
 
     errors = []
 
-    # 1. Try Groq API (llama-3.1-8b-instant) if GROQ_API_KEY is present
+    # 1. Groq API (llama-3.1-8b-instant)
     groq_key = os.environ.get("GROQ_API_KEY")
     if groq_key:
         try:
@@ -113,7 +114,7 @@ def synthesize_llm_answer(retrieved_context: str, user_query: str) -> str:
             res = client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[
-                    {"role": "system", "content": "You are an SBI AMC factual assistant."},
+                    {"role": "system", "content": "You are a factual assistant for SBI Mutual Funds."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=150,
@@ -121,14 +122,14 @@ def synthesize_llm_answer(retrieved_context: str, user_query: str) -> str:
                 timeout=10.0
             )
             if res.choices and res.choices[0].message.content:
-                logger.info("Successfully synthesized answer using Groq (llama-3.1-8b-instant)")
+                logger.info("Successfully completed LLM synthesis using Groq (llama-3.1-8b-instant)")
                 return res.choices[0].message.content.strip()
         except Exception as e:
             err_msg = f"Groq Error: {type(e).__name__} - {str(e)}"
             logger.warning(err_msg)
             errors.append(err_msg)
 
-    # 2. Try Gemini API (gemini-2.5-flash / gemini-1.5-flash) if GEMINI_API_KEY or GOOGLE_API_KEY is present
+    # 2. Gemini API (gemini-2.5-flash / gemini-1.5-flash)
     gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if gemini_key:
         try:
@@ -141,14 +142,14 @@ def synthesize_llm_answer(retrieved_context: str, user_query: str) -> str:
                 model = genai.GenerativeModel("gemini-1.5-flash")
                 response = model.generate_content(prompt, request_options={"timeout": 10})
             if response and response.text:
-                logger.info("Successfully synthesized answer using Gemini Flash")
+                logger.info("Successfully completed LLM synthesis using Gemini Flash")
                 return response.text.strip()
         except Exception as e:
             err_msg = f"Gemini Error: {type(e).__name__} - {str(e)}"
             logger.warning(err_msg)
             errors.append(err_msg)
 
-    # 3. Try OpenAI API (gpt-4o-mini) if OPENAI_API_KEY is present
+    # 3. OpenAI API (gpt-4o-mini)
     openai_key = os.environ.get("OPENAI_API_KEY")
     if openai_key:
         try:
@@ -157,7 +158,7 @@ def synthesize_llm_answer(retrieved_context: str, user_query: str) -> str:
             res = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are an SBI AMC factual assistant."},
+                    {"role": "system", "content": "You are a factual assistant for SBI Mutual Funds."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=150,
@@ -165,18 +166,18 @@ def synthesize_llm_answer(retrieved_context: str, user_query: str) -> str:
                 timeout=10.0
             )
             if res.choices and res.choices[0].message.content:
-                logger.info("Successfully synthesized answer using OpenAI (gpt-4o-mini)")
+                logger.info("Successfully completed LLM synthesis using OpenAI (gpt-4o-mini)")
                 return res.choices[0].message.content.strip()
         except Exception as e:
             err_msg = f"OpenAI Error: {type(e).__name__} - {str(e)}"
             logger.warning(err_msg)
             errors.append(err_msg)
 
-    # If API calls failed or keys were unconfigured, return explicit error message
+    # If API completion failed or keys are missing, return explicit error string
     if errors:
-        return f"LLM Execution Error: {'; '.join(errors)}"
+        return f"LLM Generation Failed: {'; '.join(errors)}"
     else:
-        return "LLM Execution Error: Missing API Key - None of OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, or GROQ_API_KEY are configured in environment."
+        return "LLM Generation Failed: Missing API Key - None of GROQ_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, or OPENAI_API_KEY are configured in environment."
 
 
 def query_sql_facts(query_text: str) -> Optional[Dict[str, Any]]:
@@ -270,13 +271,9 @@ def query_vector_search(query_text: str) -> Optional[Dict[str, Any]]:
                     logger.info(f"ChromaDB Vector Search Result: Best Score = {score:.4f}")
                     if score <= MAX_SIMILARITY_SCORE_THRESHOLD:
                         content = best_doc.page_content.strip()
-                        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', content) if len(s.strip()) > 10]
-                        clean_text = " ".join(sentences[:2]) if sentences else content[:250]
-                        if not clean_text.endswith("."):
-                            clean_text += "."
                         metadata = best_doc.metadata
                         return {
-                            "text": clean_text,
+                            "text": content,
                             "source_url": metadata.get("source_url", DEFAULT_SOURCE_URL),
                             "scheme_name": metadata.get("topic", "SBI Mutual Fund"),
                             "last_updated": metadata.get("last_updated", DEFAULT_TIMESTAMP)
@@ -294,13 +291,9 @@ def query_vector_search(query_text: str) -> Optional[Dict[str, Any]]:
             if res and res.get("documents") and res["documents"][0]:
                 doc_text = res["documents"][0][0]
                 meta = res["metadatas"][0][0] if res.get("metadatas") else {}
-                sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', doc_text) if len(s.strip()) > 10]
-                clean_text = " ".join(sentences[:2]) if sentences else doc_text[:250]
-                if not clean_text.endswith("."):
-                    clean_text += "."
                 logger.info("ChromaDB Native Client Search Succeeded")
                 return {
-                    "text": clean_text,
+                    "text": doc_text,
                     "source_url": meta.get("source_url", DEFAULT_SOURCE_URL),
                     "scheme_name": meta.get("topic", "SBI Mutual Fund"),
                     "last_updated": meta.get("last_updated", DEFAULT_TIMESTAMP)
@@ -415,10 +408,7 @@ def process_rag_query(user_query: str) -> Dict[str, Any]:
         # Step 3: Zero Hallucination Rule (Unknown Refusal)
         if not retrieved:
             logger.info("No matching factual source found. Returning zero-hallucination refusal.")
-            unknown_msg = (
-                "I do not have enough verified factual information in my current sources to answer this question. "
-                "Please refer to the official SBI Mutual Fund documentation at https://www.sbimf.com."
-            )
+            unknown_msg = "Information not available in official SBI AMC documents."
             return {
                 "answer": unknown_msg,
                 "source_url": DEFAULT_SOURCE_URL,
@@ -429,15 +419,15 @@ def process_rag_query(user_query: str) -> Dict[str, Any]:
                 ]
             }
 
-        # Step 4: Synthesize Retrieved Context via LLM (Explicit error reporting, zero raw chunk fallback)
+        # Step 4: ACTUALLY call the LLM completion (do not return retrieved context directly!)
         try:
-            synthesized_answer = synthesize_llm_answer(retrieved['text'], user_query)
+            final_answer = synthesize_llm_answer(retrieved['text'], user_query)
         except Exception as e:
-            synthesized_answer = f"LLM Execution Error: {type(e).__name__} - {str(e)}"
+            final_answer = f"LLM Generation Failed: {type(e).__name__} - {str(e)}"
 
-        # Format Final Answer (Synthesized Answer + Citation + Timestamp)
-        answer_text = (
-            f"{synthesized_answer}\n"
+        # Format Final Answer (LLM Synthesized Answer + Citation + Timestamp)
+        formatted_answer = (
+            f"{final_answer}\n"
             f"Source: {retrieved['source_url']}\n\n"
             f"Last updated from sources: {retrieved['last_updated']}"
         )
@@ -445,7 +435,7 @@ def process_rag_query(user_query: str) -> Dict[str, Any]:
         follow_ups = generate_follow_up_questions(retrieved.get("scheme_name", ""))
 
         return {
-            "answer": answer_text,
+            "answer": formatted_answer,
             "source_url": retrieved["source_url"],
             "follow_up_questions": follow_ups
         }
@@ -453,7 +443,7 @@ def process_rag_query(user_query: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Unhandled exception in process_rag_query: {e}", exc_info=True)
         fallback_err = (
-            f"LLM Execution Error: {type(e).__name__} - {str(e)}"
+            f"LLM Generation Failed: {type(e).__name__} - {str(e)}"
         )
         return {
             "answer": fallback_err,
