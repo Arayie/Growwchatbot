@@ -53,7 +53,7 @@ def verify_chroma_vectorstore():
     )
     vectorstore = Chroma(persist_directory=CHROMA_DB_DIR, embedding_function=embeddings)
 
-    test_query = "How do I download my capital gains statement?"
+    test_query = "What is expense ratio of SBI Contra Fund Direct Plan Growth"
     print(f"Executing Vector Search Query: '{test_query}'...\n")
 
     results = vectorstore.similarity_search_with_score(test_query, k=2)

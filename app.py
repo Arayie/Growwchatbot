@@ -120,7 +120,7 @@ async def chat_endpoint(request: ChatRequest):
             last_updated="2026-08-04",
             follow_up_questions=[
                 "What is the minimum SIP amount for SBI Small Cap Fund?",
-                "How do I download my capital gains statement?"
+                "What is expense ratio of SBI Contra Fund Direct Plan Growth"
             ],
             clarification_needed=None
         )

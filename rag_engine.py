@@ -373,7 +373,7 @@ def generate_follow_up_questions(scheme_name: str) -> List[str]:
         ]
     else:
         return [
-            "How do I download my capital gains statement?",
+            "What is expense ratio of SBI Contra Fund Direct Plan Growth",
             "What is the exit load if redeemed within 1 year?",
             "What is the minimum SIP amount for SBI funds?"
         ]
@@ -447,7 +447,7 @@ def process_rag_query(user_query: str) -> Dict[str, Any]:
                 "source_url": DEFAULT_SOURCE_URL,
                 "follow_up_questions": [
                     "What is the minimum SIP amount for SBI Small Cap Fund?",
-                    "How do I download my capital gains statement?",
+                    "What is expense ratio of SBI Contra Fund Direct Plan Growth",
                     "What is the lock-in period for SBI ELSS Fund?"
                 ]
             }
@@ -483,7 +483,7 @@ def process_rag_query(user_query: str) -> Dict[str, Any]:
             "source_url": DEFAULT_SOURCE_URL,
             "follow_up_questions": [
                 "What is the minimum SIP amount for SBI Small Cap Fund?",
-                "How do I download my capital gains statement?"
+                "What is expense ratio of SBI Contra Fund Direct Plan Growth"
             ]
         }
 
@@ -491,7 +491,7 @@ def process_rag_query(user_query: str) -> Dict[str, Any]:
 if __name__ == "__main__":
     sample_queries = [
         "What is the minimum SIP for SBI Small Cap Direct Growth?",
-        "How do I download my capital gains statement?",
+        "What is expense ratio of SBI Contra Fund Direct Plan Growth",
         "Should I invest in SBI Small Cap Fund?",
         "What is the capital of France?",
         "What is the NAV?"
