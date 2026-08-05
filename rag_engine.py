@@ -89,22 +89,11 @@ def _get_embedding_function():
         return None
 
 
-def _call_llm_with_timeout(func, timeout=10):
-    """Wraps an LLM API function with a strict timeout to prevent API hangs."""
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(func)
-        try:
-            return future.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            logger.warning(f"LLM call timed out after {timeout} seconds")
-            return None
-        except Exception as e:
-            logger.warning(f"LLM execution error: {e}")
-            return None
-
-
 def synthesize_llm_answer(retrieved_context: str, user_query: str) -> str:
-    """Synthesizes raw retrieved context into a concise 2-sentence answer using fast LLM tiers (gemini-2.5-flash / gpt-4o-mini / llama-3.1-8b-instant)."""
+    """
+    Synthesizes raw retrieved context into a concise 2-sentence answer via LLM API.
+    Exposes explicit LLM execution errors when API calls fail or keys are unconfigured.
+    """
     prompt = (
         "You are an SBI AMC factual assistant. Synthesize the answer into 2 concise sentences based ONLY on the provided context. "
         "Do not output raw retrieved chunks. If the exact answer is in the facts, state it clearly. "
@@ -113,10 +102,12 @@ def synthesize_llm_answer(retrieved_context: str, user_query: str) -> str:
         f"User Question: {user_query}"
     )
 
+    errors = []
+
     # 1. Try Groq API (llama-3.1-8b-instant) if GROQ_API_KEY is present
     groq_key = os.environ.get("GROQ_API_KEY")
     if groq_key:
-        def _call_groq():
+        try:
             import groq
             client = groq.Groq(api_key=groq_key)
             res = client.chat.completions.create(
@@ -126,42 +117,41 @@ def synthesize_llm_answer(retrieved_context: str, user_query: str) -> str:
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=150,
-                temperature=0.2
+                temperature=0.2,
+                timeout=10.0
             )
             if res.choices and res.choices[0].message.content:
+                logger.info("Successfully synthesized answer using Groq (llama-3.1-8b-instant)")
                 return res.choices[0].message.content.strip()
-            return None
-
-        res_text = _call_llm_with_timeout(_call_groq, timeout=10)
-        if res_text:
-            logger.info("Successfully synthesized answer using Groq (llama-3.1-8b-instant)")
-            return res_text
+        except Exception as e:
+            err_msg = f"Groq Error: {type(e).__name__} - {str(e)}"
+            logger.warning(err_msg)
+            errors.append(err_msg)
 
     # 2. Try Gemini API (gemini-2.5-flash / gemini-1.5-flash) if GEMINI_API_KEY or GOOGLE_API_KEY is present
     gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if gemini_key:
-        def _call_gemini():
+        try:
             import google.generativeai as genai
             genai.configure(api_key=gemini_key)
             try:
                 model = genai.GenerativeModel("gemini-2.5-flash")
-                response = model.generate_content(prompt)
+                response = model.generate_content(prompt, request_options={"timeout": 10})
             except Exception:
                 model = genai.GenerativeModel("gemini-1.5-flash")
-                response = model.generate_content(prompt)
+                response = model.generate_content(prompt, request_options={"timeout": 10})
             if response and response.text:
+                logger.info("Successfully synthesized answer using Gemini Flash")
                 return response.text.strip()
-            return None
-
-        res_text = _call_llm_with_timeout(_call_gemini, timeout=10)
-        if res_text:
-            logger.info("Successfully synthesized answer using Gemini Flash")
-            return res_text
+        except Exception as e:
+            err_msg = f"Gemini Error: {type(e).__name__} - {str(e)}"
+            logger.warning(err_msg)
+            errors.append(err_msg)
 
     # 3. Try OpenAI API (gpt-4o-mini) if OPENAI_API_KEY is present
     openai_key = os.environ.get("OPENAI_API_KEY")
     if openai_key:
-        def _call_openai():
+        try:
             import openai
             client = openai.OpenAI(api_key=openai_key)
             res = client.chat.completions.create(
@@ -171,24 +161,22 @@ def synthesize_llm_answer(retrieved_context: str, user_query: str) -> str:
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=150,
-                temperature=0.2
+                temperature=0.2,
+                timeout=10.0
             )
             if res.choices and res.choices[0].message.content:
+                logger.info("Successfully synthesized answer using OpenAI (gpt-4o-mini)")
                 return res.choices[0].message.content.strip()
-            return None
+        except Exception as e:
+            err_msg = f"OpenAI Error: {type(e).__name__} - {str(e)}"
+            logger.warning(err_msg)
+            errors.append(err_msg)
 
-        res_text = _call_llm_with_timeout(_call_openai, timeout=10)
-        if res_text:
-            logger.info("Successfully synthesized answer using OpenAI (gpt-4o-mini)")
-            return res_text
-
-    # 4. Clean Fallback Synthesis (Formatting raw text into 2 concise sentences)
-    clean_text = retrieved_context.strip()
-    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', clean_text) if len(s.strip()) > 10]
-    result = " ".join(sentences[:2]) if sentences else clean_text[:250]
-    if not result.endswith("."):
-        result += "."
-    return result
+    # If API calls failed or keys were unconfigured, return explicit error message
+    if errors:
+        return f"LLM Execution Error: {'; '.join(errors)}"
+    else:
+        return "LLM Execution Error: Missing API Key - None of OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, or GROQ_API_KEY are configured in environment."
 
 
 def query_sql_facts(query_text: str) -> Optional[Dict[str, Any]]:
@@ -441,12 +429,15 @@ def process_rag_query(user_query: str) -> Dict[str, Any]:
                 ]
             }
 
-        # Step 4: Synthesize Retrieved Context via LLM (Strict 2-sentence constraint & 10s timeout)
-        synthesized_text = synthesize_llm_answer(retrieved['text'], user_query)
+        # Step 4: Synthesize Retrieved Context via LLM (Explicit error reporting, zero raw chunk fallback)
+        try:
+            synthesized_answer = synthesize_llm_answer(retrieved['text'], user_query)
+        except Exception as e:
+            synthesized_answer = f"LLM Execution Error: {type(e).__name__} - {str(e)}"
 
-        # Format Final Answer (Synthesized Text + Citation + Timestamp)
+        # Format Final Answer (Synthesized Answer + Citation + Timestamp)
         answer_text = (
-            f"{synthesized_text}\n"
+            f"{synthesized_answer}\n"
             f"Source: {retrieved['source_url']}\n\n"
             f"Last updated from sources: {retrieved['last_updated']}"
         )
@@ -462,8 +453,7 @@ def process_rag_query(user_query: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Unhandled exception in process_rag_query: {e}", exc_info=True)
         fallback_err = (
-            "I do not have enough verified factual information in my current sources to answer this question. "
-            "Please refer to the official SBI Mutual Fund documentation at https://www.sbimf.com."
+            f"LLM Execution Error: {type(e).__name__} - {str(e)}"
         )
         return {
             "answer": fallback_err,

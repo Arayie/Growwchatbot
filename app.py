@@ -111,14 +111,11 @@ async def chat_endpoint(request: ChatRequest):
         )
     except Exception as e:
         logger.error(f"Unhandled exception in /api/chat endpoint: {e}", exc_info=True)
-        fallback_msg = (
-            "I do not have enough verified factual information in my current sources to answer this question. "
-            "Please refer to the official SBI Mutual Fund documentation at https://www.sbimf.com."
-        )
+        err_msg = f"LLM Execution Error: {type(e).__name__} - {str(e)}"
         return ChatResponse(
             status="success",
             intent="FACTUAL_QUERY",
-            answer=fallback_msg,
+            answer=err_msg,
             source_url="https://www.sbimf.com",
             last_updated="2026-08-04",
             follow_up_questions=[
