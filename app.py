@@ -46,14 +46,25 @@ class ChatResponse(BaseModel):
     clarification_needed: Optional[str] = None
 
 
+def check_api_key():
+    key = os.getenv("OPENAI_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GROQ_API_KEY")
+    if not key:
+        return False, "MISSING"
+    masked = key[:7] + "..." + key[-4:] if len(key) > 10 else "LOADED"
+    return True, masked
+
+
+@app.get("/")
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint for service uptime monitoring."""
+    """Health check endpoint for service uptime monitoring & API key verification."""
     logger.info("Health check endpoint pinged.")
+    key_loaded, key_preview = check_api_key()
     return {
         "status": "online",
-        "version": "1.0.0",
-        "service": "Groww SBI Mutual Fund RAG Assistant"
+        "service": "Groww SBI Mutual Fund RAG Assistant",
+        "api_key_status": "LOADED" if key_loaded else "MISSING",
+        "key_preview": key_preview
     }
 
 
