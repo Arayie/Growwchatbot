@@ -90,26 +90,29 @@ def _get_embedding_function():
 
 
 def get_working_gemini_response(prompt_text: str) -> str:
-    """Dynamically auto-discovers active Gemini models from genai.list_models() with fallback loop."""
+    """Dynamically auto-discovers active Gemini models from genai.list_models() with graceful retries and fallback loop."""
     import google.generativeai as genai
+    import time
     gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not gemini_key:
         raise Exception("Missing Gemini API key in environment variables.")
     genai.configure(api_key=gemini_key)
 
-    # Priority-ordered valid Gemini models
-    candidates = ["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview"]
+    # Priority-ordered valid Gemini models starting with gemini-1.5-flash
+    candidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
-    # Try candidates first
+    # Try candidates first with graceful retry
     for model_name in candidates:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt_text, request_options={"timeout": 10})
-            if response and response.text:
-                logger.info(f"Successfully generated content with candidate Gemini model: '{model_name}'")
-                return response.text.strip()
-        except Exception:
-            continue
+        for attempt in range(2):
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt_text, request_options={"timeout": 10})
+                if response and response.text:
+                    logger.info(f"Successfully generated content with candidate Gemini model: '{model_name}'")
+                    return response.text.strip()
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1} for Gemini model '{model_name}' failed: {e}")
+                time.sleep(0.5)
 
     # If standard candidates fail, dynamically query available models on the key
     try:

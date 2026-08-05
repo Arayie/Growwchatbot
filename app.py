@@ -54,6 +54,33 @@ def check_api_key():
     return True, masked
 
 
+def get_gemini_llm(model_name: str = "gemini-1.5-flash"):
+    """
+    Initializes Gemini model (ChatGoogleGenerativeAI / GenerativeModel) 
+    with graceful retries and fallback handling to prevent 404 errors.
+    """
+    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not gemini_key:
+        return None
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model=model_name,
+            google_api_key=gemini_key,
+            temperature=0.2,
+            max_retries=3
+        )
+    except Exception as e:
+        logger.warning(f"Failed to initialize ChatGoogleGenerativeAI with model {model_name}: {e}")
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_key)
+            return genai.GenerativeModel(model_name)
+        except Exception as e2:
+            logger.error(f"Failed to initialize GenerativeModel with model {model_name}: {e2}")
+            return None
+
+
 @app.get("/")
 @app.get("/api/health")
 async def health_check():
