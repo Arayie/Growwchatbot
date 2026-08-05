@@ -98,7 +98,7 @@ def get_working_gemini_response(prompt_text: str) -> str:
     genai.configure(api_key=gemini_key)
 
     # Priority-ordered valid Gemini models
-    candidates = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+    candidates = ["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview"]
 
     # Try candidates first
     for model_name in candidates:
