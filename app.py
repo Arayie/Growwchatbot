@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from rag_engine import process_rag_query
 from router import classify_intent
+from guardrails import sanitize_user_input
 
 # Configure Structured Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s - %(message)s")
@@ -58,7 +59,13 @@ async def health_check():
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
-    """Main conversation endpoint handling user prompts through Phase 3 RAG Engine."""
+    """
+    Main conversation endpoint executing full Phase 1-5 pipeline:
+    1. Guardrails (PII scrubbing via guardrails.py)
+    2. Intent Router (Classification via router.py)
+    3. Retrieval & LLM Synthesis (rag_engine.py)
+    4. Dynamic Follow-ups Generation
+    """
     user_msg = request.message
     if not user_msg or not user_msg.strip():
         logger.warning("Empty message received at /api/chat")
@@ -67,14 +74,17 @@ async def chat_endpoint(request: ChatRequest):
     logger.info(f"Received API Chat Request: '{user_msg[:60]}...'")
 
     try:
-        # Step 1: Detect intent via Phase 2 router
-        intent_data = classify_intent(user_msg)
+        # Step 1: PII Guardrail Scrubbing
+        sanitized_msg = sanitize_user_input(user_msg)
+
+        # Step 2: Intent Classification & Routing
+        intent_data = classify_intent(sanitized_msg)
         intent = intent_data["intent"]
 
-        # Step 2: Execute query via Phase 3 RAG Engine
-        rag_res = process_rag_query(user_msg)
+        # Step 3: Execute Retrieval, LLM Synthesis, and Dynamic Follow-ups
+        rag_res = process_rag_query(sanitized_msg)
 
-        # Step 3: Handle special cases (Ambiguous query clarification)
+        # Step 4: Handle Special Intent Clarifications
         clarification = None
         if intent == "AMBIGUOUS_QUERY":
             clarification = intent_data.get("clarification_needed", "Please specify the scheme name and plan.")
