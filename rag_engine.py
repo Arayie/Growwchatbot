@@ -88,6 +88,59 @@ def _get_embedding_function():
         return None
 
 
+def synthesize_llm_answer(retrieved_context: str, user_query: str) -> str:
+    """Synthesizes raw retrieved context into a concise, human-readable answer via LLM."""
+    prompt = (
+        "You are an SBI AMC factual assistant. Answer the user's question concisely using ONLY the provided facts below. "
+        "Do NOT dump raw tables or entire chunks. If the exact answer is in the facts, state it clearly. "
+        "If not, state that the information is not available.\n\n"
+        f"Context:\n{retrieved_context}\n\n"
+        f"User Question: {user_query}"
+    )
+
+    # 1. Try Gemini API if key is present
+    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if gemini_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(prompt)
+            if response and response.text:
+                logger.info("Successfully synthesized answer using Gemini LLM API")
+                return response.text.strip()
+        except Exception as e:
+            logger.warning(f"Gemini LLM synthesis failed: {e}")
+
+    # 2. Try OpenAI API if key is present
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            import openai
+            client = openai.OpenAI(api_key=openai_key)
+            res = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are an SBI AMC factual assistant."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2
+            )
+            if res.choices and res.choices[0].message.content:
+                logger.info("Successfully synthesized answer using OpenAI LLM API")
+                return res.choices[0].message.content.strip()
+        except Exception as e:
+            logger.warning(f"OpenAI LLM synthesis failed: {e}")
+
+    # 3. Clean Fallback Synthesis (Formatting raw text cleanly into concise sentences)
+    clean_text = retrieved_context.strip()
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', clean_text) if len(s.strip()) > 10]
+    result = " ".join(sentences[:2]) if sentences else clean_text[:250]
+    if not result.endswith("."):
+        result += "."
+    return result
+
+
 def query_sql_facts(query_text: str) -> Optional[Dict[str, Any]]:
     """Attempts to match scheme and metric in SQLite database."""
     query_lower = query_text.lower()
@@ -338,9 +391,12 @@ def process_rag_query(user_query: str) -> Dict[str, Any]:
                 ]
             }
 
-        # Step 4: Format Final Answer (<= 3 Sentences + Citation + Timestamp)
+        # Step 4: Synthesize Retrieved Context via LLM
+        synthesized_text = synthesize_llm_answer(retrieved['text'], user_query)
+
+        # Format Final Answer (Synthesized Text + Citation + Timestamp)
         answer_text = (
-            f"{retrieved['text']}\n"
+            f"{synthesized_text}\n"
             f"Source: {retrieved['source_url']}\n\n"
             f"Last updated from sources: {retrieved['last_updated']}"
         )
